@@ -7,32 +7,43 @@ import numpy as np
 st.set_page_config(page_title="Pnömoni Teşhis Sistemi", layout="centered")
 st.title("🩺 BME3180: Pnömoni Teşhis Paneli")
 
-# --- 2. MODELİ HATALARI AYIKLAYARAK YÜKLE ---
+# --- 2. KESİN ÇÖZÜM: MODELİ MANUEL İNŞA ET VE AĞIRLIKLARI YÜKLE ---
 @st.cache_resource
 def load_my_model():
-    from keras.layers import BatchNormalization
-
-    # Keras'ın model dosyasından okuduğu ama tanımadığı parametreleri 
-    # süper sınıfa göndermeden önce ayıklayan özel sınıf.
-    class SafeBatchNormalization(BatchNormalization):
-        def __init__(self, **kwargs):
-            # Hata veren tüm anahtarları kwargs sözlüğünden siliyoruz
-            for key in ['renorm', 'renorm_clipping', 'renorm_momentum']:
-                kwargs.pop(key, None)
-            super().__init__(**kwargs)
-
-    try:
-        # Modeli bu özel 'Safe' katman ile yüklüyoruz. 
-        # custom_objects sayesinde Keras hata vermek yerine bizim sınıfımızı kullanacak.
-        model = tf.keras.models.load_model(
-            'custom_pneumonia_professional_final.keras',
-            custom_objects={'BatchNormalization': SafeBatchNormalization},
-            compile=False # Tahmin için eğitim metriklerine gerek yok, hata payını azaltır
-        )
-        return model
-    except Exception as e:
-        st.error(f"Kritik Yükleme Hatası: {e}")
-        return None
+    # Hata veren Keras okuyucusunu atlıyor, model iskeletini kendimiz çiziyoruz
+    model = tf.keras.models.Sequential([
+        tf.keras.layers.InputLayer(shape=(150, 150, 3)),
+        
+        # 1. Blok
+        tf.keras.layers.Conv2D(32, (3, 3), activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D((2, 2)),
+        
+        # 2. Blok
+        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D((2, 2)),
+        
+        # 3. Blok
+        tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D((2, 2)),
+        
+        # 4. Blok
+        tf.keras.layers.Conv2D(256, (3, 3), activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.MaxPooling2D((2, 2)),
+        
+        # Sınıflandırıcı
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(512, activation='relu'),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    
+    # Bozuk konfigürasyonları pas geçip, SADECE senin eğittiğin ağırlıkları (kasları) yüklüyoruz!
+    model.load_weights('custom_pneumonia_professional_final.keras')
+    return model
 
 with st.spinner('Yapay Zeka motoru hazırlanıyor, lütfen bekleyiniz...'):
     model = load_my_model()
@@ -51,7 +62,7 @@ if file and model:
             size = (150, 150)
             processed_img = ImageOps.fit(img, size, Image.Resampling.LANCZOS)
             img_array = np.asarray(processed_img).astype('float32') / 255.0
-            img_array = np.expand_dims(img_array, axis=0) # Shape: (1, 150, 150, 3)
+            img_array = np.expand_dims(img_array, axis=0)
             
             # Tahmin yürütme
             prediction = model.predict(img_array)
@@ -65,4 +76,4 @@ if file and model:
                 st.success(f"✅ SONUÇ: AKCİĞERLER NORMAL GÖRÜNÜYOR")
                 st.write(f"**Güven Oranı:** %{(1 - score) * 100:.2f}")
             
-            st.info("Bilgi: Bu araç Biyomedikal Mühendisliği bitirme projesi kapsamında geliştirilmiştir.")
+            st.info("Bilgi: Bu araç eğitim amaçlı geliştirilmiştir. Kesin teşhis için uzman doktor onayı gereklidir.")
