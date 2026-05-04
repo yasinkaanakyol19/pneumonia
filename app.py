@@ -3,77 +3,61 @@ import tensorflow as tf
 from PIL import Image, ImageOps
 import numpy as np
 
-# --- 1. SAYFA AYARLARI VE BAŞLIK ---
+# --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Pnömoni Teşhis Sistemi", layout="centered")
 st.title("🩺 BME3180: Pnömoni Teşhis Paneli")
-st.write("Lütfen analiz edilecek göğüs röntgenini (X-Ray) yükleyiniz.")
 
-# --- 2. MODELİ HATALARI BYPASS EDEREK YÜKLE ---
+# --- 2. MODELİ TÜM HATALARI BYPASS EDEREK YÜKLE ---
 @st.cache_resource
 def load_my_model():
-    # Model yüklenirken BatchNormalization hatalarını tamamen görmezden geliyoruz
+    # BatchNormalization'daki 'renorm' hatasını aşmak için en basit yöntem: 
+    # Katmanı özel bir nesne olarak değil, Keras'ın kendi sınıfını 
+    # ama hatalı argümanları yutacak şekilde kandırarak yüklüyoruz.
+    
+    from keras.layers import BatchNormalization
+
+    class CustomBatchNormalization(BatchNormalization):
+        def __init__(self, **kwargs):
+            # Model dosyasından gelen ama bu versiyonda olmayan tüm parametreleri siliyoruz
+            bad_keys = ['renorm', 'renorm_clipping', 'renorm_momentum']
+            for key in bad_keys:
+                kwargs.pop(key, None)
+            super().__init__(**kwargs)
+
     try:
-        # custom_objects içinde BatchNormalization'ı Keras'ın kendi sınıfına 
-        # ama hatalı argümanları kabul etmeyen bir yapıya zorluyoruz
+        # compile=False yaparak eğitim metriklerinin yüklenmesini pas geçiyoruz (tahmin için gerek yok)
         model = tf.keras.models.load_model(
             'custom_pneumonia_professional_final.keras',
-            safe_mode=False, # Yeni Keras sürümlerinde güvenli modu kapatmak dosya okumayı kolaylaştırır
+            custom_objects={'BatchNormalization': CustomBatchNormalization},
             compile=False
         )
         return model
     except Exception as e:
-        # Eğer hala hata verirse, katmanı manuel olarak 'yutucu' bir sınıfla değiştiriyoruz
-        from tensorflow.keras.layers import Layer
-        class SafeBatchNormalization(Layer):
-            def __init__(self, **kwargs):
-                # Tüm bilinmeyen parametreleri temizle
-                for key in ['renorm', 'renorm_clipping', 'renorm_momentum']:
-                    kwargs.pop(key, None)
-                super().__init__(**kwargs)
-            def call(self, x): return x
+        st.error(f"Kritik Yükleme Hatası: {e}")
+        return None
 
-        return tf.keras.models.load_model(
-            'custom_pneumonia_professional_final.keras',
-            custom_objects={'BatchNormalization': SafeBatchNormalization},
-            compile=False
-        )
-
-with st.spinner('Model yükleniyor, lütfen bekleyiniz...'):
+with st.spinner('Model ve Yapay Zeka motoru hazırlanıyor...'):
     model = load_my_model()
 
-# --- 3. DOSYA YÜKLEME ALANI ---
-file = st.file_uploader("Görüntü Seçiniz", type=["jpg", "png", "jpeg"])
+# --- 3. ARAYÜZ VE TAHMİN ---
+file = st.file_uploader("Röntgen Görseli Yükle", type=["jpg", "png", "jpeg"])
 
-def predict_pneumonia(image_data, model):
-    size = (150, 150)    
-    image = ImageOps.fit(image_data, size, Image.Resampling.LANCZOS)
-    img_array = np.asarray(image)
-    img_reshape = img_array.astype('float32') / 255.0
-    img_reshape = np.expand_dims(img_reshape, axis=0)
+if file and model:
+    img = Image.open(file).convert('RGB')
+    st.image(img, caption='Analiz Edilecek Görüntü', use_container_width=True)
     
-    prediction = model.predict(img_reshape)
-    return prediction
-
-# --- 4. SONUÇLARI GÖSTER ---
-if file is not None and model is not None:
-    image = Image.open(file).convert('RGB')
-    st.image(image, caption='Yüklenen Röntgen Görüntüsü', use_container_width=True)
-    
-    if st.button("Teşhis Et"):
-        with st.spinner('Yapay zeka analiz ediyor...'):
-            prediction = predict_pneumonia(image, model)
-            score = float(prediction.flatten()[0])
-            
-            st.divider()
-            if score > 0.5:
-                st.error(f"⚠️ SONUÇ: PNÖMONİ (ZATÜRRE) TESPİT EDİLDİ")
-                st.write(f"**Güven Oranı:** %{score * 100:.2f}")
-            else:
-                st.success(f"✅ SONUÇ: NORMAL (SAĞLIKLI)")
-                st.write(f"**Güven Oranı:** %{(1 - score) * 100:.2f}")
-            
-            st.info("Not: Bu sonuç bir yapay zeka tahminidir. Kesin teşhis için uzman radyolog onayı gereklidir.")
-
-# --- 5. AKADEMİK BİLGİ ---
-st.sidebar.title("Proje Hakkında")
-st.sidebar.info("BME3180 Bitirme Projesi - Derin Öğrenme ile Pnömoni Teşhisi")
+    if st.button("Analizi Başlat"):
+        # Görüntü işleme (Eğitimdeki gibi 150x150)
+        size = (150, 150)
+        processed_img = ImageOps.fit(img, size, Image.Resampling.LANCZOS)
+        img_array = np.asarray(processed_img).astype('float32') / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        prediction = model.predict(img_array)
+        score = float(prediction.flatten()[0])
+        
+        st.divider()
+        if score > 0.5:
+            st.error(f"🚨 SONUÇ: PNÖMONİ BELİRTİLERİ SAPTANDI (Güven: %{score*100:.2f})")
+        else:
+            st.success(f"✅ SONUÇ: AKCİĞERLER NORMAL GÖRÜNÜYOR (Güven: %{(1-score)*100:.2f})")
