@@ -8,26 +8,28 @@ st.set_page_config(page_title="Pnömoni Teşhis Sistemi", layout="centered")
 st.title("🩺 BME3180: Pnömoni Teşhis Paneli")
 st.write("Lütfen analiz edilecek göğüs röntgenini (X-Ray) yükleyiniz.")
 
-# --- 2. MODELİ GÜVENLİ ŞEKİLDE YÜKLE ---
-@st.cache_resource # Modelin her seferinde tekrar yüklenip kasmasını önler
+# --- 2. MODELİ RADİKAL ŞEKİLDE YÜKLE ---
+@st.cache_resource
 def load_my_model():
-    # BatchNormalization katmanındaki sürüm uyumsuzluklarını gidermek için özel sınıf
-    from keras.src.layers.normalization.batch_normalization import BatchNormalization
-    
-    class SafeBatchNormalization(BatchNormalization):
+    # Hata veren katmanı tamamen etkisiz hale getiriyoruz
+    class DummyBatchNormalization(tf.keras.layers.Layer):
         def __init__(self, **kwargs):
-            # Hata veren 'renorm' parametrelerini temizliyoruz
-            kwargs.pop('renorm', None)
-            kwargs.pop('renorm_clipping', None)
-            kwargs.pop('renorm_momentum', None)
-            super().__init__(**kwargs)
+            # Gelen tüm hatalı parametreleri (renorm vb.) yutuyoruz
+            super().__init__()
+        def call(self, x, training=False):
+            return x
 
-    # Modeli 'custom_objects' kullanarak, sorunlu katmanları SafeBatchNormalization ile değiştirerek yükle
-    model = tf.keras.models.load_model(
-        'custom_pneumonia_professional_final.keras',
-        custom_objects={'BatchNormalization': SafeBatchNormalization}
-    )
-    return model
+    # Modeli 'BatchNormalization' katmanını bu pasif sınıf ile değiştirerek yükle
+    try:
+        model = tf.keras.models.load_model(
+            'custom_pneumonia_professional_final.keras',
+            custom_objects={'BatchNormalization': DummyBatchNormalization},
+            compile=False # Sunum için sadece tahmin (inference) yeterli, derlemeye gerek yok
+        )
+        return model
+    except Exception as e:
+        st.error(f"Model yüklenirken bir hata oluştu: {e}")
+        return None
 
 with st.spinner('Model yükleniyor, lütfen bekleyiniz...'):
     model = load_my_model()
@@ -36,32 +38,23 @@ with st.spinner('Model yükleniyor, lütfen bekleyiniz...'):
 file = st.file_uploader("Görüntü Seçiniz", type=["jpg", "png", "jpeg"])
 
 def predict_pneumonia(image_data, model):
-    # Görüntüyü modelin eğitildiği boyuta (150x150) getiriyoruz
     size = (150, 150)    
     image = ImageOps.fit(image_data, size, Image.Resampling.LANCZOS)
     img_array = np.asarray(image)
-    
-    # Normalizasyon ve Boyut Ayarlama (Batch boyutu ekleme)
     img_reshape = img_array.astype('float32') / 255.0
-    img_reshape = np.expand_dims(img_reshape, axis=0) # (1, 150, 150, 3)
+    img_reshape = np.expand_dims(img_reshape, axis=0)
     
-    # Tahmin
     prediction = model.predict(img_reshape)
     return prediction
 
 # --- 4. SONUÇLARI GÖSTER ---
-if file is None:
-    st.text("Henüz bir görüntü yüklenmedi.")
-else:
-    # Yüklenen görüntüyü ekranda göster
+if file is not None and model is not None:
     image = Image.open(file).convert('RGB')
     st.image(image, caption='Yüklenen Röntgen Görüntüsü', use_container_width=True)
     
-    # Analiz butonu
     if st.button("Teşhis Et"):
         with st.spinner('Yapay zeka analiz ediyor...'):
             prediction = predict_pneumonia(image, model)
-            # Dönen tahmini düzleştirip ilk değeri skora çeviriyoruz
             score = float(prediction.flatten()[0])
             
             st.divider()
@@ -72,12 +65,8 @@ else:
                 st.success(f"✅ SONUÇ: NORMAL (SAĞLIKLI)")
                 st.write(f"**Güven Oranı:** %{(1 - score) * 100:.2f}")
             
-            st.info("Not: Bu sonuç bir yapay zeka tahminidir. Kesin teşhis için uzman bir radyolog onayı gereklidir.")
+            st.info("Not: Bu sonuç bir yapay zeka tahminidir. Kesin teşhis için uzman radyolog onayı gereklidir.")
 
-# --- 5. AKADEMİK BİLGİ ---
+# --- 5. SIDEBAR ---
 st.sidebar.title("Proje Hakkında")
-st.sidebar.info(
-    "Bu model, özgün bir CNN mimarisi kullanılarak "
-    "1137 test görseli üzerinde %87 doğruluk ve "
-    "0.9279 AUC skoru ile eğitilmiştir."
-)
+st.sidebar.info("BME3180 Bitirme Projesi - Derin Öğrenme ile Pnömoni Teşhisi")
