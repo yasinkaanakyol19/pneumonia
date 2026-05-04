@@ -12,20 +12,22 @@ st.title("🩺 BME3180: Pnömoni Teşhis Paneli")
 def load_my_model():
     from keras.layers import BatchNormalization
 
-    # Keras'ın model dosyasından okuduğu hatalı parametreleri ayıklayan özel sınıf
+    # Keras'ın model dosyasından okuduğu ama tanımadığı parametreleri 
+    # süper sınıfa göndermeden önce ayıklayan özel sınıf.
     class SafeBatchNormalization(BatchNormalization):
         def __init__(self, **kwargs):
-            # Hata veren parametreleri kwargs sözlüğünden tamamen siliyoruz
+            # Hata veren tüm anahtarları kwargs sözlüğünden siliyoruz
             for key in ['renorm', 'renorm_clipping', 'renorm_momentum']:
                 kwargs.pop(key, None)
             super().__init__(**kwargs)
 
     try:
-        # Modeli bu özel 'Safe' katman ile yüklüyoruz
+        # Modeli bu özel 'Safe' katman ile yüklüyoruz. 
+        # custom_objects sayesinde Keras hata vermek yerine bizim sınıfımızı kullanacak.
         model = tf.keras.models.load_model(
             'custom_pneumonia_professional_final.keras',
             custom_objects={'BatchNormalization': SafeBatchNormalization},
-            compile=False
+            compile=False # Tahmin için eğitim metriklerine gerek yok, hata payını azaltır
         )
         return model
     except Exception as e:
@@ -49,7 +51,7 @@ if file and model:
             size = (150, 150)
             processed_img = ImageOps.fit(img, size, Image.Resampling.LANCZOS)
             img_array = np.asarray(processed_img).astype('float32') / 255.0
-            img_array = np.expand_dims(img_array, axis=0) # (1, 150, 150, 3)
+            img_array = np.expand_dims(img_array, axis=0) # Shape: (1, 150, 150, 3)
             
             # Tahmin yürütme
             prediction = model.predict(img_array)
@@ -63,4 +65,4 @@ if file and model:
                 st.success(f"✅ SONUÇ: AKCİĞERLER NORMAL GÖRÜNÜYOR")
                 st.write(f"**Güven Oranı:** %{(1 - score) * 100:.2f}")
             
-            st.info("Bilgi: Bu araç eğitim amaçlı bir projedir. Tıbbi tavsiye yerine geçmez.")
+            st.info("Bilgi: Bu araç Biyomedikal Mühendisliği bitirme projesi kapsamında geliştirilmiştir.")
