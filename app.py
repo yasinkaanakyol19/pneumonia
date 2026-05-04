@@ -8,11 +8,25 @@ st.set_page_config(page_title="Pnömoni Teşhis Sistemi", layout="centered")
 st.title("🩺 BME3180: Pnömoni Teşhis Paneli")
 st.write("Lütfen analiz edilecek göğüs röntgenini (X-Ray) yükleyiniz.")
 
-# --- 2. MODELİ YÜKLE ---
+# --- 2. MODELİ GÜVENLİ ŞEKİLDE YÜKLE ---
 @st.cache_resource # Modelin her seferinde tekrar yüklenip kasmasını önler
 def load_my_model():
-    # Kaydettiğin modelin isminin aynı olduğundan emin ol
-    model = tf.keras.models.load_model('custom_pneumonia_professional_final.keras')
+    # BatchNormalization katmanındaki sürüm uyumsuzluklarını gidermek için özel sınıf
+    from keras.src.layers.normalization.batch_normalization import BatchNormalization
+    
+    class SafeBatchNormalization(BatchNormalization):
+        def __init__(self, **kwargs):
+            # Hata veren 'renorm' parametrelerini temizliyoruz
+            kwargs.pop('renorm', None)
+            kwargs.pop('renorm_clipping', None)
+            kwargs.pop('renorm_momentum', None)
+            super().__init__(**kwargs)
+
+    # Modeli 'custom_objects' kullanarak, sorunlu katmanları SafeBatchNormalization ile değiştirerek yükle
+    model = tf.keras.models.load_model(
+        'custom_pneumonia_professional_final.keras',
+        custom_objects={'BatchNormalization': SafeBatchNormalization}
+    )
     return model
 
 with st.spinner('Model yükleniyor, lütfen bekleyiniz...'):
@@ -27,7 +41,7 @@ def predict_pneumonia(image_data, model):
     image = ImageOps.fit(image_data, size, Image.Resampling.LANCZOS)
     img_array = np.asarray(image)
     
-    # Normalizasyon ve Boyut Ayarlama (Batch boyutu ekleme)[cite: 1]
+    # Normalizasyon ve Boyut Ayarlama (Batch boyutu ekleme)
     img_reshape = img_array.astype('float32') / 255.0
     img_reshape = np.expand_dims(img_reshape, axis=0) # (1, 150, 150, 3)
     
@@ -47,6 +61,7 @@ else:
     if st.button("Teşhis Et"):
         with st.spinner('Yapay zeka analiz ediyor...'):
             prediction = predict_pneumonia(image, model)
+            # Dönen tahmini düzleştirip ilk değeri skora çeviriyoruz
             score = float(prediction.flatten()[0])
             
             st.divider()
@@ -64,5 +79,5 @@ st.sidebar.title("Proje Hakkında")
 st.sidebar.info(
     "Bu model, özgün bir CNN mimarisi kullanılarak "
     "1137 test görseli üzerinde %87 doğruluk ve "
-    "0.9279 AUC skoru ile eğitilmiştir.[cite: 1]"
+    "0.9279 AUC skoru ile eğitilmiştir."
 )
